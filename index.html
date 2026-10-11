@@ -129,7 +129,7 @@
         <!-- BAŞLANGIÇ EKRANI -->
         <div id="start-screen" class="overlay">
             <div id="top-record-display">🏆 Rekor: <span id="menu-record-val">Henüz yok</span></div>
-            <h1>ÇOKLU TOPLAR</h1>
+            <h1>ÇOKLU TOPlar</h1>
             <p>En iyi derecen tarayıcında saklanır!<br>Oyuna başlamak için tıkla.</p>
             <button class="btn" onclick="startGame()">OYUNA BAŞLA</button>
         </div>
@@ -219,8 +219,6 @@
         let score = 0;
         let lives = 3;
         let gameActive = false;
-        let ballSpawnInterval = 7000;
-        let ballTimer = null;
         let secondTimer = null;
         let gameSeconds = 0;
 
@@ -282,7 +280,6 @@
             if (e.key === "ArrowRight" && paddle.dx > 0) paddle.dx = 0;
         });
 
-        // Mouse ve Dokunmatik Kontroller
         function handleMove(clientX) {
             if (!gameActive) return;
             const rect = canvas.getBoundingClientRect();
@@ -314,7 +311,6 @@
             score = 0;
             lives = 3;
             gameSeconds = 0;
-            ballSpawnInterval = 7000;
             initTargets();
             balls = [];
             
@@ -325,8 +321,6 @@
             document.getElementById("game-over").style.display = "none";
             updateUI();
 
-            setupBallTimer();
-
             if (secondTimer) clearInterval(secondTimer);
             secondTimer = setInterval(() => {
                 if (gameActive) {
@@ -335,49 +329,24 @@
                 }
             }, 1000);
 
-            loop();
+            lastTime = performance.now();
+            loop(lastTime);
         }
 
-        function setupBallTimer() {
-            if (ballTimer) clearInterval(ballTimer);
-            ballTimer = setInterval(() => {
-                if (gameActive) {
-                    addNewBall();
-                }
-            }, ballSpawnInterval);
-        }
-
-        function addNewBall() {
-            let innerBall = balls.find(b => b.y < offsetTop + (rowCount * 15));
-            
-            if (innerBall) {
-                balls.push({
-                    x: innerBall.x,
-                    y: innerBall.y,
-                    radius: 8,
-                    dx: (Math.random() > 0.5 ? 1 : -1) * (2.0 + Math.random() * 0.6),
-                    dy: (Math.random() > 0.5 ? 1 : -1) * 2.2
-                });
-            } else {
-                balls.push({
-                    x: paddle.x + paddle.width / 2,
-                    y: paddle.y - 18,
-                    radius: 8,
-                    dx: (Math.random() > 0.5 ? 1 : -1) * (2.0 + Math.random() * 0.6),
-                    dy: -2.2
-                });
-            }
+        function addNewBall(specificX, specificY) {
+            balls.push({
+                x: specificX !== undefined ? specificX : (paddle.x + paddle.width / 2),
+                y: specificY !== undefined ? specificY : (paddle.y - 18),
+                radius: 8,
+                dx: (Math.random() > 0.5 ? 1 : -1) * (2.0 + Math.random() * 0.6),
+                dy: -2.2,
+                spawnCooldown: 40 // Aynı yerde üst üste top doğmasını engellemek için gecikme
+            });
         }
 
         function updateUI() {
             document.getElementById("score-val").innerText = score;
             document.getElementById("time-val").innerText = gameSeconds + "s";
-
-            let targetInterval = score >= 2000 ? 3000 : 7000;
-            if (ballSpawnInterval !== targetInterval) {
-                ballSpawnInterval = targetInterval;
-                setupBallTimer();
-            }
 
             let scoreEl = document.getElementById("score-val");
             if (score >= 2000) {
@@ -450,17 +419,38 @@
             }
         }
 
-        function update() {
+        function update(dt) {
             if (!gameActive) return;
 
-            paddle.x += paddle.dx;
+            let dtMultiplier = dt / 16.666;
+
+            paddle.x += paddle.dx * dtMultiplier;
             if (paddle.x < 0) paddle.x = 0;
             if (paddle.x + paddle.width > canvas.width) paddle.x = canvas.width - paddle.width;
 
+            let middleCorridorMinX = targets[Math.floor(colCount/2) - 1][3].x - 10;
+            let middleCorridorMaxX = targets[Math.floor(colCount/2)][3].x + 10;
+            let middleCorridorMinY = targets[0][3].y;
+            let middleCorridorMaxY = targets[0][rowCount - 2].y;
+
             for (let i = balls.length - 1; i >= 0; i--) {
                 let b = balls[i];
-                b.x += b.dx;
-                b.y += b.dy;
+                b.x += b.dx * dtMultiplier;
+                b.y += b.dy * dtMultiplier;
+
+                if (b.spawnCooldown && b.spawnCooldown > 0) {
+                    b.spawnCooldown -= dtMultiplier;
+                }
+
+                // Top orta koridorun (boşluğun) içine girdiğinde yeni top üret
+                if (
+                    (!b.spawnCooldown || b.spawnCooldown <= 0) &&
+                    b.x >= middleCorridorMinX && b.x <= middleCorridorMaxX &&
+                    b.y >= middleCorridorMinY && b.y <= middleCorridorMaxY
+                ) {
+                    addNewBall(b.x, b.y);
+                    b.spawnCooldown = 60; // Tekrar tetiklenmesi için süre sınırı
+                }
 
                 if (b.x - b.radius < 0) {
                     b.x = b.radius;
@@ -558,16 +548,20 @@
             }
         }
 
-        function loop() {
+        let lastTime = 0;
+        function loop(timestamp) {
             if (!gameActive) return;
-            update();
+            let dt = timestamp - lastTime;
+            if (dt > 100) dt = 16.666;
+            lastTime = timestamp;
+
+            update(dt);
             draw();
             requestAnimationFrame(loop);
         }
 
         function gameOver(isWin) {
             gameActive = false;
-            if (ballTimer) clearInterval(ballTimer);
             if (secondTimer) clearInterval(secondTimer);
             
             let titleEl = document.getElementById("game-over-title");
